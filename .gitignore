@@ -1,0 +1,10 @@
+bin/
+dist/
+test-results/
+preferences.json
+settings.json
+status.json
+window-shelf.data-dir
+*-error.txt
+*.log
+__pycache__/

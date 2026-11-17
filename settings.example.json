@@ -1,0 +1,28 @@
+{
+  "ExpandedWidth": 280,
+  "IconSize": 32,
+  "FontSize": 16,
+  "RowHeight": 44,
+  "HeaderHeight": 34,
+  "FontFamily": "Microsoft YaHei UI",
+  "HoverExpandDelayMs": 180,
+  "HoverCollapseDelayMs": 450,
+  "RefreshIntervalMs": 900,
+  "TopInset": 0,
+  "ChildIndent": 12,
+  "CloseButtonWidth": 40,
+  "CenterList": true,
+  "Colors": {
+    "Background": "#F3F4F6",
+    "Header": "#E9ECF0",
+    "Text": "#303844",
+    "Border": "#D8DDE4",
+    "Active": "#E2E7ED",
+    "Hover": "#E9EDF2",
+    "Secondary": "#DCE5F2",
+    "SecondaryActive": "#C5D6EC",
+    "Accent": "#56759A",
+    "Close": "#66717E",
+    "CloseHover": "#A53841"
+  }
+}
