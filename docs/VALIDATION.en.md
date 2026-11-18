@@ -1,5 +1,11 @@
 # Validation
 
+## v0.1.1 regression
+
+The installed patch binary passed 51 checks: the original 43 interaction/layout checks and eight native-window stacking checks. Small non-activating fixtures reproduce a taskbar rising while it is not foreground, then verify overlay recovery, higher-flyout preservation, unchanged focus and geometry, an unchanged already-correct order, and recovery after another taskbar raise.
+
+The local desktop stacking order and composite screenshot confirmed the original failure. After deployment, the user confirmed hover expansion was fully visible again. These desktop captures remain local and are not included in this repository or release. The repaired binary has not yet been observed through another full sign-out/reboot cycle. The two-monitor transfer results below come from v0.1.0; that feature was unchanged in this patch.
+
 This is a locally tested preview, not a claim of compatibility with every Windows application.
 
 - Internal regression checks cover inline aliases, cancel/reset, title updates, group/window sorting, collapse state, persistence, stable icon coordinates across hover, stable scroll offsets, fixed row sizes and compact-mode close hit testing.

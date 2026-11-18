@@ -35,6 +35,19 @@ static class Native {
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h,int cmd);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
+    public static bool IsAbove(IntPtr window,IntPtr other){
+        if(window==IntPtr.Zero||other==IntPtr.Zero||window==other)return false;
+        var seen=new HashSet<IntPtr>();
+        for(IntPtr h=GetWindow(other,3);h!=IntPtr.Zero&&seen.Add(h);h=GetWindow(h,3))if(h==window)return true;
+        return false;
+    }
+    public static bool KeepAboveTaskbar(IntPtr window,IntPtr taskbar){
+        if(!IsWindow(window)||!IsWindow(taskbar)||!IsWindowVisible(taskbar)||!IsAbove(taskbar,window))return false;
+        // Insert directly above the taskbar, below existing menus/flyouts. Do not activate,
+        // move, resize, or reorder its hidden owner. Explorer need not be foreground.
+        IntPtr previous=GetWindow(taskbar,3);
+        return SetWindowPos(window,previous==IntPtr.Zero?new IntPtr(-1):previous,0,0,0,0,0x213);
+    }
     [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h,int id,uint modifiers,uint key);
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h,int id);
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
@@ -259,8 +272,7 @@ class ShelfForm : Form {
         var rect=new Rectangle(taskRect.Left,top,width,bottom-top);
         if(Bounds!=rect){Bounds=rect;BuildRows();PlaceEditor();}
         if(!Visible)Show();
-        // Reassert only when the native taskbar was activated, not above arbitrary menus.
-        if(Native.GetForegroundWindow()==Native.FindWindow("Shell_TrayWnd",null))Native.SetWindowPos(Handle,new IntPtr(-1),0,0,0,0,0x13);
+        Native.KeepAboveTaskbar(Handle,Native.FindWindow("Shell_TrayWnd",null));
         IntPtr foreground=Native.GetForegroundWindow();IntPtr a=Native.GetAncestor(foreground,3);if(Native.Pid(foreground)!=Process.GetCurrentProcess().Id&&active!=a){active=a;Invalidate();}
     }
     public void BuildRows(){
@@ -385,6 +397,7 @@ class ShelfForm : Form {
     protected override void OnFormClosed(FormClosedEventArgs e){timer.Stop();Save();if(hotkey)Native.UnregisterHotKey(Handle,1);if(trayIcon!=null){trayIcon.Visible=false;trayIcon.Dispose();}catalog.Dispose();tip.Dispose();base.OnFormClosed(e);}
     public void WriteStatus(){try{File.WriteAllText(diagnosticPath,new JavaScriptSerializer().Serialize(new {utc=DateTime.UtcNow.ToString("o"),visible=Visible,paused=paused,boundaryValid=!temporarilyHidden,bounds=new {x=Left,y=Top,width=Width,height=Height},tray=new {x=trayRect.X,y=trayRect.Y,width=trayRect.Width,height=trayRect.Height},windowCount=Model.Windows.Count,groupCount=Model.Groups().Count,rowCount=rows.Count,expanded=Model.Pref.Pinned||hoverExpanded,pinned=Model.Pref.Pinned,inlineEditing=editor!=null,compactWidth=Model.Pref.CompactWidth,expandedWidth=settings.ExpandedWidth,hotkey=hotkey,rows=rows.Select(r=>new{header=r.Header,handle=(r.Header?Model.Children(r.Group)[0].Handle:r.Window.Handle).ToInt64(),y=r.Bounds.Y,height=r.Bounds.Height,alias=!r.Header&&!String.IsNullOrEmpty(r.Window.Alias)}).ToArray(),fixtures=Model.Windows.Where(w=>w.Title.StartsWith("WindowShelf 验证窗口")).Select(w=>new{handle=w.Handle.ToInt64(),title=w.Title,label=w.Label}).ToArray()}),new UTF8Encoding(false));}catch{}}
     public void RunUiTests(List<string> results){
+        RunZOrderTests(results);
         Assert(ShouldMinimize(false,true),"foreground row click minimizes",results);
         Assert(!ShouldMinimize(true,true),"minimized row click restores",results);
         Assert(!ShouldMinimize(false,false),"background row click activates",results);
@@ -417,6 +430,26 @@ class ShelfForm : Form {
         foreach(var r in rows.Where(r=>!DetailRow(r)))Assert(IconRect(r)==expandedIcons[r.Group],"expand roundtrip does not move application icon",results);
         ClientSize=new Size(92,100);BuildRows();scroll=Math.Min(rowHeight,MaxScroll());BuildRows();int priorScroll=scroll;var scrolled=rows.Where(r=>!DetailRow(r)).ToDictionary(r=>r.Group,r=>IconRect(r));ClientSize=new Size(280,100);BuildRows();Assert(scroll==priorScroll,"hover preserves scroll offset",results);foreach(var r in rows.Where(r=>!DetailRow(r)))Assert(IconRect(r)==scrolled[r.Group],"overflow hover preserves icon positions",results);
         ClientSize=new Size(280,700);BuildRows();
+    }
+    public void RunZOrderTests(List<string> results){
+        using(var overlay=new Form{ShowInTaskbar=false,TopMost=true})
+        using(var taskbar=new Form{ShowInTaskbar=false,TopMost=true})
+        using(var flyout=new Form{ShowInTaskbar=false,TopMost=true}){
+            // Non-activating fixtures: no change to the real taskbar or app windows.
+            IntPtr a=overlay.Handle,b=taskbar.Handle,c=flyout.Handle;
+            foreach(var h in new[]{a,b,c})Native.SetWindowPos(h,new IntPtr(-1),-30000,-30000,2,2,0x250);
+            Assert(Native.IsAbove(b,a)&&Native.IsAbove(c,b),"fixture reproduces background taskbar overlap",results);
+            IntPtr foreground=Native.GetForegroundWindow();Native.RECT before,after;Native.GetWindowRect(a,out before);
+            Assert(Native.KeepAboveTaskbar(a,b),"repair without taskbar foreground",results);
+            Native.GetWindowRect(a,out after);
+            Assert(Native.IsAbove(a,b),"overlay restored above taskbar",results);
+            Assert(Native.IsAbove(c,a),"existing flyout stays above overlay",results);
+            Assert(Native.GetForegroundWindow()==foreground,"z-order repair preserves foreground",results);
+            Assert(before.Rect==after.Rect,"z-order repair preserves geometry",results);
+            Assert(!Native.KeepAboveTaskbar(a,b),"already-correct z-order is unchanged",results);
+            Native.SetWindowPos(b,new IntPtr(-1),0,0,0,0,0x213);
+            Assert(Native.KeepAboveTaskbar(a,b)&&Native.IsAbove(a,b),"repeated taskbar raise recovers",results);
+        }
     }
     public void RunMonitorTests(List<string> results){
         if(Screen.AllScreens.Length<2){results.Add("SKIP: second monitor unavailable");return;}

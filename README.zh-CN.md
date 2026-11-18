@@ -10,9 +10,17 @@
 
 *根据配色方案重绘的示意图，使用虚构窗口标题，不是电脑桌面截图。实际应用图标保留各自原色。*
 
+## v0.1.1 修复
+
+登录后，Windows 有时会在其他应用仍处于前台时，把原生任务栏抬到 Shelf 上面。此时悬停仍能展开侧栏，但图标区域被原生任务栏遮挡。新版检查实际窗口层级，仅在需要时恢复到任务栏正上方，不激活自身、不改变尺寸；修复时保留原本位于任务栏上方的浮层优先顺序。
+
+**从 v0.1.0 升级：**从菜单退出 Window Shelf，把新运行包解压到原安装目录，再启动。保留原数据目录和已有的 `window-shelf.data-dir` 文件；EXE 路径不变时，无需重新注册计划任务。本次修复没有新增参数或启动任务。
+
+参见[中文更新记录](CHANGELOG.zh-CN.md)、[English changes](CHANGELOG.md)与[验证范围](docs/VALIDATION.zh-CN.md)。
+
 ## 下载与运行
 
-1. 在 [Releases](https://github.com/Zhy54/window-shelf/releases) 下载 `WindowShelf-v0.1.0-win-x64.zip`。
+1. 在 [Releases](https://github.com/Zhy54/window-shelf/releases) 下载 `WindowShelf-v0.1.1-win-x64.zip`。
 2. 解压到长期保留的目录，运行 `WindowShelf.exe`。
 3. 原生任务栏应为**左侧竖向**。横向、右侧任务栏或无法取得托盘边界时，覆盖层会隐藏。
 

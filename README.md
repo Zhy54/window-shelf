@@ -10,9 +10,17 @@ A small Windows window switcher that overlays the application area of a **left-s
 
 *Illustration based on the proposed color scheme, with fictitious window titles. It is not a desktop screenshot. Original app icons keep their own colors.*
 
+## Fixed in v0.1.1
+
+After sign-in, Windows could raise the native taskbar above Window Shelf while another app kept focus. Hover still expanded the shelf, but the taskbar covered its icon area. The shelf now checks the actual stacking order and restores itself immediately above the taskbar when needed, without activating itself or changing its bounds. Windows already above the taskbar, such as flyouts, keep their relative priority during this repair.
+
+**Upgrade from v0.1.0:** exit Window Shelf from its menu, extract the new runtime ZIP into the same installation folder, and launch it again. Keep your data folder and any `window-shelf.data-dir` file. If the EXE path is unchanged, the existing scheduled task needs no re-registration. This fix adds no parameters or startup tasks.
+
+See [English changes](CHANGELOG.md), [中文更新记录](CHANGELOG.zh-CN.md), and [validation](docs/VALIDATION.en.md).
+
 ## Download and run
 
-1. Open [Releases](https://github.com/Zhy54/window-shelf/releases) and download `WindowShelf-v0.1.0-win-x64.zip`.
+1. Open [Releases](https://github.com/Zhy54/window-shelf/releases) and download `WindowShelf-v0.1.1-win-x64.zip`.
 2. Extract the ZIP into a permanent folder, then run `WindowShelf.exe`.
 3. Keep the native vertical taskbar on the **left**. A horizontal/right-side taskbar or an unavailable tray boundary makes the overlay hide instead of guessing its position.
 
