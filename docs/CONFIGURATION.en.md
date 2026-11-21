@@ -16,7 +16,7 @@ Edit `settings.json` in the data folder, save, then choose **⋯ → 重新加�
 | `HoverCollapseDelayMs` | `450` | 100–5000 | Delay before collapsing after leaving. |
 | `RefreshIntervalMs` | `900` | 300–5000 | Window/title/monitor refresh cadence, rounded by the UI timer. |
 | `TopInset` | `0` | 0–500 | Pixels left uncovered at the top; about 96 keeps the original Start/Search area on the tested layout. |
-| `ChildIndent` | `12` | 0–24 | Small inset for child-window icons, background and title. |
+| `ChildIndent` | `12` | 0–24 | Inset of child-window icons from the left edge of the detail column. Titles follow the icon. |
 | `CloseButtonWidth` | `40` | 32–64 | Close-button hit area; hidden and inactive in compact mode. |
 | `CenterList` | `true` | true / false | Center when content fits; false starts at the top. |
 

@@ -11,6 +11,8 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
+[assembly: System.Reflection.AssemblyFileVersion("0.1.2.0")]
+
 namespace WindowShelf {
 static class Native {
     public delegate bool EnumProc(IntPtr h, IntPtr l);
@@ -35,6 +37,11 @@ static class Native {
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h,int cmd);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
+    public const uint ForegroundChanged=0x0003, ObjectsReordered=0x8004;
+    public delegate void WinEventHandler(IntPtr hook,uint kind,IntPtr window,int objectId,int childId,uint thread,uint time);
+    [DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint first,uint last,IntPtr module,WinEventHandler handler,uint process,uint thread,uint flags);
+    [DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
+    [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
     public static bool IsAbove(IntPtr window,IntPtr other){
         if(window==IntPtr.Zero||other==IntPtr.Zero||window==other)return false;
         var seen=new HashSet<IntPtr>();
@@ -75,21 +82,80 @@ static class Native {
     public static int Pid(IntPtr h){uint p;GetWindowThreadProcessId(h,out p);return (int)p;}
     public static string PathOf(int pid) {var h=OpenProcess(0x1000,false,(uint)pid);if(h==IntPtr.Zero)return "";try{int n=2048;var s=new StringBuilder(n);return QueryFullProcessImageName(h,0,s,ref n)?s.ToString():"";}finally{CloseHandle(h);}}
     public static string AppId(int pid) {var h=OpenProcess(0x1000,false,(uint)pid);if(h==IntPtr.Zero)return "";try{uint n=512;var s=new StringBuilder((int)n);return GetApplicationUserModelId(h,ref n,s)==0?s.ToString():"";}catch{return "";}finally{CloseHandle(h);}}
-    public static Bitmap WindowIcon(IntPtr h,string path,int size) {
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr LoadIcon(IntPtr module,IntPtr resource);
+    static readonly IntPtr standardIcon=LoadIcon(IntPtr.Zero,new IntPtr(32512));
+    public static Bitmap WindowIcon(IntPtr h,string path,int size,out bool placeholder) {
+        placeholder=false;
         Bitmap fallback=null;
         try {IntPtr icon;SendMessageTimeout(h,0x7f,new IntPtr(1),IntPtr.Zero,2,60,out icon);
-            if(icon==IntPtr.Zero)icon=GetClassLongPtr(h,-14);
-            if(icon!=IntPtr.Zero){using(var clone=(Icon)Icon.FromHandle(icon).Clone())fallback=clone.ToBitmap();if(fallback.Width==size&&fallback.Height==size)return fallback;}
+            if(icon!=IntPtr.Zero&&icon!=standardIcon){using(var clone=(Icon)Icon.FromHandle(icon).Clone())fallback=clone.ToBitmap();if(fallback.Width==size&&fallback.Height==size)return fallback;}
             if(File.Exists(path)){
                 IntPtr large=IntPtr.Zero,small=IntPtr.Zero;
                 try{if(SHDefExtractIcon(path,0,0,out large,out small,(uint)size)==0&&large!=IntPtr.Zero){using(var copy=(Icon)Icon.FromHandle(large).Clone()){var result=copy.ToBitmap();if(fallback!=null)fallback.Dispose();return result;}}}
                 finally{if(large!=IntPtr.Zero)DestroyIcon(large);if(small!=IntPtr.Zero)DestroyIcon(small);}
             }
-            if(fallback==null){SendMessageTimeout(h,0x7f,IntPtr.Zero,IntPtr.Zero,2,60,out icon);if(icon!=IntPtr.Zero){using(var clone=(Icon)Icon.FromHandle(icon).Clone())fallback=clone.ToBitmap();}}
-        }catch{}return fallback??SystemIcons.Application.ToBitmap();
+            if(fallback==null){SendMessageTimeout(h,0x7f,IntPtr.Zero,IntPtr.Zero,2,60,out icon);
+                if(icon==IntPtr.Zero||icon==standardIcon)icon=GetClassLongPtr(h,-14);
+                if(icon!=IntPtr.Zero&&icon!=standardIcon){using(var clone=(Icon)Icon.FromHandle(icon).Clone())fallback=clone.ToBitmap();}}
+        }catch{}
+        placeholder=fallback==null;
+        return fallback??SystemIcons.Application.ToBitmap();
+    }
+}
+static class FrameApp {
+    [StructLayout(LayoutKind.Sequential)] struct PropertyKey {public Guid Format; public uint Id;}
+    [StructLayout(LayoutKind.Explicit,Size=24)] struct Variant {
+        [FieldOffset(0)] public ushort Type;
+        [FieldOffset(8)] public IntPtr Value;
+    }
+    [ComImport,Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface PropertyStore {
+        void GetCount(out uint count);
+        void GetAt(uint index,out PropertyKey key);
+        void GetValue(ref PropertyKey key,out Variant value);
+    }
+    [ComImport,Guid("BCC18B79-BA16-442F-80C4-8A59C30C463B"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface ImageFactory {void GetImage(Size size,uint flags,out IntPtr bitmap);}
+    [DllImport("shell32.dll")] static extern int SHGetPropertyStoreForWindow(IntPtr window,ref Guid iid,out PropertyStore store);
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref Variant value);
+    [DllImport("shell32.dll",CharSet=CharSet.Unicode)] static extern int SHCreateItemFromParsingName(string path,IntPtr context,ref Guid iid,out ImageFactory item);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
+    public static string Identity(IntPtr window,int hostPid){
+        var iid=typeof(PropertyStore).GUID; PropertyStore store;
+        if(SHGetPropertyStoreForWindow(window,ref iid,out store)==0){
+            try{
+                var key=new PropertyKey{Format=new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),Id=5}; Variant value;
+                store.GetValue(ref key,out value);
+                try{if(value.Type==31){string id=Marshal.PtrToStringUni(value.Value);if(!String.IsNullOrEmpty(id)&&id.Contains("!"))return id;}}
+                finally{PropVariantClear(ref value);}
+            }catch(COMException){}finally{Marshal.ReleaseComObject(store);}
+        }
+        string childId=null;
+        Native.EnumChildWindows(window,delegate(IntPtr child,IntPtr unused){
+            int pid=Native.Pid(child);
+            if(pid!=hostPid&&Native.Class(child)=="Windows.UI.Core.CoreWindow")childId=Native.AppId(pid);
+            return String.IsNullOrEmpty(childId);
+        },IntPtr.Zero);
+        return childId;
+    }
+    public static Bitmap IconFor(string id,int size){
+        var iid=typeof(ImageFactory).GUID;ImageFactory factory;
+        if(SHCreateItemFromParsingName(@"shell:AppsFolder\"+id,IntPtr.Zero,ref iid,out factory)!=0)return null;
+        IntPtr h=IntPtr.Zero;
+        try{
+            factory.GetImage(new Size(size,size),4,out h);
+            using(var bitmap=Image.FromHbitmap(h)){
+                // Shell icon bitmaps carry alpha even when GDI+ reports an RGB format.
+                if(Image.GetPixelFormatSize(bitmap.PixelFormat)!=32)return new Bitmap(bitmap);
+                var data=bitmap.LockBits(new Rectangle(Point.Empty,bitmap.Size),System.Drawing.Imaging.ImageLockMode.ReadOnly,bitmap.PixelFormat);
+                try{using(var argb=new Bitmap(bitmap.Width,bitmap.Height,data.Stride,System.Drawing.Imaging.PixelFormat.Format32bppPArgb,data.Scan0))return new Bitmap(argb);}
+                finally{bitmap.UnlockBits(data);}
+            }
+        }catch(COMException){return null;}finally{if(h!=IntPtr.Zero)DeleteObject(h);Marshal.ReleaseComObject(factory);}
     }
 }
 class WindowItem {
+    public DateTime IconRefreshAt=DateTime.MaxValue;
     public IntPtr Handle; public int Pid; public string Id,Group,App,Title,Alias,Path; public Bitmap Icon;public bool Secondary;
     public string Label {get{return String.IsNullOrWhiteSpace(Alias)?Title:Alias;}}
 }
@@ -157,6 +223,20 @@ class ShelfModel {
 }
 class ProcInfo {public string Path,Key,App,Started;}
 class WindowCatalog : IDisposable {
+    void RefreshIcon(WindowItem window,DateTime now,bool firstRead){
+        string path=window.Path;
+        if(String.IsNullOrEmpty(path))path=Native.PathOf(window.Pid);
+        bool placeholder;
+        var next=Native.WindowIcon(window.Handle,path,IconSize,out placeholder);
+        if(!placeholder||window.Icon==null){
+            var previous=window.Icon;
+            window.Icon=next;
+            window.Path=path;
+            if(previous!=null)previous.Dispose();
+        }else next.Dispose();
+        // Qt windows may publish their application icon after the top-level window appears.
+        window.IconRefreshAt=firstRead?now.AddSeconds(5):placeholder?now.AddSeconds(30):DateTime.MaxValue;
+    }
     public int IconSize=32;
     Dictionary<int,ProcInfo> processes=new Dictionary<int,ProcInfo>();
     Dictionary<string,WindowItem> cache=new Dictionary<string,WindowItem>();
@@ -182,7 +262,19 @@ class WindowCatalog : IDisposable {
                 }
                 seenPids.Add(pid);
                 string id=pid+":"+info.Started+":"+h.ToInt64();WindowItem w;
-                if(!cache.TryGetValue(id,out w)) {w=new WindowItem{Id=id,Handle=h,Pid=pid,Group=info.Key,App=info.App,Path=info.Path,Icon=Native.WindowIcon(h,info.Path,IconSize)};cache[id]=w;}
+                bool frame=cls=="ApplicationFrameWindow";
+                if(!cache.TryGetValue(id,out w)||frame&&w.Group==info.Key) {
+                    string appId=frame?FrameApp.Identity(h,pid):null;
+                    if(w==null||!String.IsNullOrEmpty(appId)){
+                        var icon=String.IsNullOrEmpty(appId)?null:FrameApp.IconFor(appId,IconSize);
+                        var replacement=new WindowItem{Id=id,Handle=h,Pid=pid,Group=String.IsNullOrEmpty(appId)?info.Key:appId,
+                            App=String.IsNullOrEmpty(appId)?info.App:title,Path=info.Path,Icon=icon};
+                        if(icon==null)RefreshIcon(replacement,DateTime.UtcNow,true);
+                        if(w!=null)w.Icon.Dispose();
+                        cache[id]=w=replacement;
+                    }
+                }
+                if(DateTime.UtcNow>=w.IconRefreshAt)RefreshIcon(w,DateTime.UtcNow,false);
                 w.Title=title;w.Secondary=Native.OnSecondaryMonitor(h);string alias;w.Alias=pref.WindowAliases.TryGetValue(id,out alias)?alias:null;found.Add(w);
             }catch{}return true;
         },IntPtr.Zero);
@@ -193,14 +285,19 @@ class WindowCatalog : IDisposable {
     }
     public void Dispose(){foreach(var w in cache.Values)w.Icon.Dispose();cache.Clear();}
 }
-class ShelfRow {public string Group;public WindowItem Window;public bool Header;public Rectangle Bounds;}
+class ShelfRow {public string Group;public WindowItem Window;public bool Header,Child;public Rectangle Bounds;}
 class ShelfForm : Form {
+    string detailGroup;
+    int detailScroll;
     public ShelfModel Model;
     AppSettings settings; DateTime lastScan=DateTime.MinValue;
     WindowCatalog catalog=new WindowCatalog();
     List<ShelfRow> rows=new List<ShelfRow>();
     System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
+    Native.WinEventHandler shellEventHandler;
+    IntPtr foregroundHook,reorderHook,taskbarHandle;
     ToolTip tip=new ToolTip(); NotifyIcon trayIcon;
+    Icon shelfIcon,notificationIcon;
     string statePath,diagnosticPath; bool testMode,paused,temporarilyHidden,hotkey,dragging,dragged; int tick,scroll,hover=-1,down=-1;Point downPoint;int drop=-1;bool dropAfter;
     Rectangle taskRect,trayRect;float scale=1;Font regular,bold,small;int rowHeight=40,headerHeight=34;IntPtr active;
     TextBox editor;ShelfRow editingRow;bool finishingEdit,hoverExpanded;int openMenus;DateTime enteredAt=DateTime.MinValue,leftAt=DateTime.MinValue;
@@ -213,13 +310,22 @@ class ShelfForm : Form {
         SetStyle(ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer|ControlStyles.UserPaint|ControlStyles.ResizeRedraw,true);
         SetFonts(1);MinimumSize=new Size(70,90);KeyPreview=true;
         tip.InitialDelay=500;tip.ReshowDelay=150;tip.AutoPopDelay=12000;
-        MouseWheel+=delegate(object s,MouseEventArgs e){scroll=Math.Max(0,Math.Min(MaxScroll(),scroll-e.Delta/120*rowHeight*3));BuildRows();Invalidate();};
+        MouseWheel+=delegate(object s,MouseEventArgs e){ScrollAt(e.Location,-e.Delta/120*rowHeight*3);};
         KeyDown+=delegate(object s,KeyEventArgs e){if(e.KeyCode==Keys.Escape){dragging=false;Capture=false;Invalidate();}if(e.KeyCode==Keys.F2&&hover>=0&&hover<rows.Count)Rename(rows[hover]);};
         if(!test){
-            trayIcon=new NotifyIcon{Icon=SystemIcons.Application,Text="窗口侧栏 · 右键可暂停或退出",Visible=true};
+            shelfIcon=new Icon(typeof(ShelfForm),"WindowShelf.ico");
+            Icon=shelfIcon;
+            notificationIcon=new Icon(shelfIcon,SystemInformation.SmallIconSize);
+            trayIcon=new NotifyIcon{Icon=notificationIcon,Text="窗口侧栏 · 右键可暂停或退出",Visible=true};
             trayIcon.MouseClick+=delegate(object s,MouseEventArgs e){if(e.Button==MouseButtons.Left){paused=!paused;UpdatePlacement();}else if(e.Button==MouseButtons.Right)ShowMainMenu(Cursor.Position);};
             timer.Interval=300;timer.Tick+=delegate{Tick();};
-            Shown+=delegate { hotkey=Native.RegisterHotKey(Handle,1,0x4000|2|4,(uint)Keys.F12);RefreshWindows();UpdatePlacement();timer.Start(); };
+            Shown+=delegate {
+                hotkey=Native.RegisterHotKey(Handle,1,0x4000|2|4,(uint)Keys.F12);
+                shellEventHandler=OnShellOrderChanged;
+                foregroundHook=WatchShellEvent(Native.ForegroundChanged);
+                reorderHook=WatchShellEvent(Native.ObjectsReordered);
+                RefreshWindows();UpdatePlacement();timer.Start();
+            };
         }
     }
     protected override bool ShowWithoutActivation {get{return true;}}
@@ -243,13 +349,23 @@ class ShelfForm : Form {
         foreach(var id in Model.Pref.WindowAliases.Keys.Where(id=>!ids.Contains(id)).ToArray()){Model.Pref.WindowAliases.Remove(id);changed=true;}
         if(changed)Save();BuildRows();Invalidate();}
     bool GetGeometry(){
-        var h=Native.FindWindow("Shell_TrayWnd",null);Native.RECT r,tr;
+        var h=taskbarHandle=Native.FindWindow("Shell_TrayWnd",null);Native.RECT r,tr;
         if(h==IntPtr.Zero||!Native.IsWindowVisible(h)||!Native.GetWindowRect(h,out r))return false;
         var th=Native.FindWindowEx(h,IntPtr.Zero,"TrayNotifyWnd",null);if(th==IntPtr.Zero||!Native.GetWindowRect(th,out tr))return false;
         taskRect=r.Rect;trayRect=tr.Rect;var screen=Screen.FromHandle(h).Bounds;
         if(taskRect.Width>=taskRect.Height||Math.Abs(taskRect.Left-screen.Left)>4||trayRect.Top<=taskRect.Top||trayRect.Height<30)return false;
         float dpi=Native.GetDpiForWindow(h)/96f;if(dpi>0&&Math.Abs(dpi-scale)>.02)SetFonts(dpi);
         return true;
+    }
+    IntPtr WatchShellEvent(uint kind){
+        // Out-of-context events arrive on the form thread. Skip our own reordering.
+        const uint skipOwnProcess=2;
+        return Native.SetWinEventHook(kind,kind,IntPtr.Zero,shellEventHandler,0,0,skipOwnProcess);
+    }
+    void OnShellOrderChanged(IntPtr hook,uint kind,IntPtr window,int objectId,int childId,uint thread,uint time){
+        if(paused||temporarilyHidden||!IsHandleCreated||!Visible||Disposing)return;
+        if(kind==Native.ObjectsReordered&&window!=taskbarHandle&&window!=Native.GetDesktopWindow())return;
+        Native.KeepAboveTaskbar(Handle,taskbarHandle);
     }
     bool FullScreenOrShellMenu(){
         IntPtr h=Native.GetForegroundWindow();if(h==IntPtr.Zero||Native.Pid(h)==Process.GetCurrentProcess().Id)return false;
@@ -272,43 +388,70 @@ class ShelfForm : Form {
         var rect=new Rectangle(taskRect.Left,top,width,bottom-top);
         if(Bounds!=rect){Bounds=rect;BuildRows();PlaceEditor();}
         if(!Visible)Show();
-        Native.KeepAboveTaskbar(Handle,Native.FindWindow("Shell_TrayWnd",null));
+        Native.KeepAboveTaskbar(Handle,taskbarHandle);
         IntPtr foreground=Native.GetForegroundWindow();IntPtr a=Native.GetAncestor(foreground,3);if(Native.Pid(foreground)!=Process.GetCurrentProcess().Id&&active!=a){active=a;Invalidate();}
     }
     public void BuildRows(){
         rows.Clear();
         foreach(string g in Model.Groups()){
             var children=Model.Children(g);if(children.Count>1){rows.Add(new ShelfRow{Group=g,Header=true});if(Model.Pref.Collapsed.Contains(g))continue;}
-            foreach(var w in children)rows.Add(new ShelfRow{Group=g,Window=w});
+            foreach(var w in children)rows.Add(new ShelfRow{Group=g,Window=w,Child=children.Count>1});
         }
-        scroll=Math.Min(scroll,MaxScroll());int contentHeight=rows.Count*rowHeight;
+        scroll=Math.Min(scroll,MaxScroll());int contentHeight=Model.Groups().Count*rowHeight;
         int y=headerHeight+(settings.CenterList?Math.Max(0,(ClientSize.Height-headerHeight-contentHeight)/2):0)-scroll;
-        foreach(var row in rows){row.Bounds=new Rectangle(0,y,ClientSize.Width,rowHeight);y+=rowHeight;}
+        int childY=0;
+        foreach(var row in rows){
+            if(!DetailRow(row)){
+                row.Bounds=new Rectangle(0,y,ClientSize.Width,rowHeight);
+                if(row.Header){
+                    int panelHeight=Model.Children(row.Group).Count*rowHeight;
+                    int offset=row.Group==detailGroup?Math.Min(detailScroll,Math.Max(0,panelHeight-(Height-headerHeight))):0;
+                    childY=Math.Max(headerHeight,Math.Min(y,Height-panelHeight))-offset;
+                }
+                y+=rowHeight;
+            }else{
+                row.Bounds=new Rectangle(IconRailWidth(),childY,Math.Max(0,Width-IconRailWidth()),rowHeight);
+                childY+=rowHeight;
+            }
+        }
     }
-    int MaxScroll(){return Math.Max(0,rows.Count*rowHeight-(ClientSize.Height-headerHeight));}
+    int MaxScroll(){return Math.Max(0,Model.Groups().Count*rowHeight-(ClientSize.Height-headerHeight));}
+    void ScrollAt(Point point,int delta){
+        int hit=Hit(point);
+        if(hit>=0&&DetailRow(rows[hit])){
+            int max=Math.Max(0,Model.Children(detailGroup).Count*rowHeight-(Height-headerHeight));
+            detailScroll=Math.Max(0,Math.Min(max,detailScroll+delta));
+        }else scroll=Math.Max(0,Math.Min(MaxScroll(),scroll+delta));
+        BuildRows();Invalidate();
+    }
     Rectangle CloseRect(ShelfRow r){return ClientSize.Width<S(150)||r.Header?Rectangle.Empty:new Rectangle(ClientSize.Width-S(settings.CloseButtonWidth+2),r.Bounds.Top,S(settings.CloseButtonWidth),rowHeight);}
     int IconRailWidth(){return taskRect.Width>0?taskRect.Width:S(92);}
-    bool DetailRow(ShelfRow r){return !r.Header&&Model.Children(r.Group).Count>1;}
-    bool RowVisible(ShelfRow r){return ClientSize.Width>=S(150)||!DetailRow(r);}
-    Rectangle IconRect(ShelfRow r){int x=(IconRailWidth()-S(settings.IconSize))/2+(DetailRow(r)?S(settings.ChildIndent):0);return new Rectangle(x,r.Bounds.Top+(rowHeight-S(settings.IconSize))/2,S(settings.IconSize),S(settings.IconSize));}
+    bool DetailRow(ShelfRow r){return r.Child;}
+    bool RowVisible(ShelfRow r){return !DetailRow(r)||(ClientSize.Width>=S(150)&&r.Group==detailGroup);}
+    Rectangle IconRect(ShelfRow r){int x=DetailRow(r)?IconRailWidth()+S(settings.ChildIndent):(IconRailWidth()-S(settings.IconSize))/2;return new Rectangle(x,r.Bounds.Top+(rowHeight-S(settings.IconSize))/2,S(settings.IconSize),S(settings.IconSize));}
     bool SecondaryRow(ShelfRow r){return r.Header?Model.Children(r.Group).Any(w=>w.Secondary):r.Window.Secondary;}
-    int LabelX(ShelfRow r){return IconRailWidth()+S(r.Header?12:DetailRow(r)?8+settings.ChildIndent:8);}
+    int LabelX(ShelfRow r){return DetailRow(r)?IconRect(r).Right+S(5):IconRailWidth()+S(r.Header?12:8);}
     void DrawAppIcon(Graphics g,Bitmap icon,int x,int y){if(icon==null)return;int size=S(settings.IconSize);if(icon.Width==size&&icon.Height==size){g.DrawImageUnscaled(icon,x,y);return;}var state=g.Save();g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;g.PixelOffsetMode=PixelOffsetMode.Half;g.DrawImage(icon,new Rectangle(x,y,size,size),new Rectangle(0,0,icon.Width,icon.Height),GraphicsUnit.Pixel);g.Restore(state);}
-    int Hit(Point p){if(p.Y<headerHeight)return -1;for(int i=0;i<rows.Count;i++)if(RowVisible(rows[i])&&(!DetailRow(rows[i])||p.X>=S(settings.ChildIndent))&&rows[i].Bounds.Contains(p))return i;return -1;}
+    int Hit(Point p){if(p.Y<headerHeight)return -1;int parent=-1;
+        for(int i=0;i<rows.Count;i++)if(RowVisible(rows[i])&&rows[i].Bounds.Contains(p)){
+            if(DetailRow(rows[i]))return i;parent=i;
+        }
+        return parent;
+    }
     void TextAt(Graphics g,string text,Font f,Rectangle rect,Color color){if(rect.Width>0)TextRenderer.DrawText(g,text,f,rect,color,TextFormatFlags.EndEllipsis|TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine|TextFormatFlags.NoPrefix|TextFormatFlags.NoPadding);}
     protected override void OnPaint(PaintEventArgs e){
         base.OnPaint(e);var g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;bool narrow=ClientSize.Width<S(150);
         using(var border=new Pen(C(settings.Colors.Border,"#D8DDE4")))g.DrawLine(border,ClientSize.Width-1,0,ClientSize.Width-1,Height);
         var clip=g.Save();g.SetClip(new Rectangle(0,headerHeight,Width,Math.Max(0,Height-headerHeight)));
-        for(int i=0;i<rows.Count;i++){
+        foreach(int i in Enumerable.Range(0,rows.Count).OrderBy(index=>DetailRow(rows[index]))){
             var r=rows[i];if(!RowVisible(r)||r.Bounds.Bottom<headerHeight||r.Bounds.Top>Height)continue;
-            var rowState=g.Save();if(DetailRow(r))g.SetClip(new Rectangle(S(settings.ChildIndent),headerHeight,Math.Max(0,Width-S(settings.ChildIndent)),Math.Max(0,Height-headerHeight)),CombineMode.Intersect);
+            var rowState=g.Save();if(DetailRow(r)){g.SetClip(r.Bounds,CombineMode.Intersect);using(var fill=new SolidBrush(BackColor))g.FillRectangle(fill,r.Bounds);}
             bool selected=r.Window!=null&&r.Window.Handle==active;
             bool secondary=SecondaryRow(r);
             if(secondary){using(var b=new SolidBrush(selected?C(settings.Colors.SecondaryActive,"#C5D6EC"):C(settings.Colors.Secondary,"#DCE5F2")))g.FillRectangle(b,new Rectangle(3,r.Bounds.Y+1,Width-7,rowHeight-2));
                 if(r.Header&&Model.Children(r.Group).Any(w=>!w.Secondary)){using(var b=new SolidBrush(C(settings.Colors.Background,"#F3F4F6")))g.FillRectangle(b,new Rectangle(3,r.Bounds.Y+1,(Width-7)/2,rowHeight-2));}
             }else if(selected||i==hover){using(var b=new SolidBrush(selected?C(settings.Colors.Active,"#E2E7ED"):C(settings.Colors.Hover,"#E9EDF2")))g.FillRectangle(b,new Rectangle(3,r.Bounds.Y+1,Width-7,rowHeight-2));}
-            if(selected){using(var b=new SolidBrush(C(settings.Colors.Accent,"#56759A")))g.FillRectangle(b,new Rectangle(1,r.Bounds.Y+S(7),S(3),rowHeight-S(14)));}
+            if(selected){using(var b=new SolidBrush(C(settings.Colors.Accent,"#56759A")))g.FillRectangle(b,new Rectangle(r.Bounds.Left+1,r.Bounds.Y+S(7),S(3),rowHeight-S(14)));}
             var fg=C(settings.Colors.Text,"#303844");var items=Model.Children(r.Group);var iconBounds=IconRect(r);DrawAppIcon(g,r.Header?items[0].Icon:r.Window.Icon,iconBounds.X,iconBounds.Y);
             if(r.Header)TextAt(g,items.Count.ToString(),bold,new Rectangle(iconBounds.Right+S(4),r.Bounds.Y,Math.Max(0,IconRailWidth()-iconBounds.Right-S(6)),rowHeight),C(settings.Colors.Close,"#66717E"));
             if(narrow){g.Restore(rowState);continue;}
@@ -331,13 +474,21 @@ class ShelfForm : Form {
         TextAt(g,Model.Pref.Pinned?"•":"↔",bold,new Rectangle(Width-S(56),0,S(25),headerHeight),C(settings.Colors.Text,"#303844"));
         TextAt(g,"⋯",bold,new Rectangle(Width-S(27),0,S(25),headerHeight),C(settings.Colors.Text,"#303844"));
         if(rows.Count==0)TextAt(g,"暂无窗口",regular,new Rectangle(S(8),headerHeight+S(12),Width-S(16),rowHeight),Color.Gray);
-        if(MaxScroll()>0){int h=Math.Max(S(24),(Height-headerHeight)*(Height-headerHeight)/(rows.Count*rowHeight));int y=headerHeight+(Height-headerHeight-h)*scroll/MaxScroll();using(var b=new SolidBrush(C(settings.Colors.Close,"#66717E")))g.FillRectangle(b,Width-3,y,2,h);}
+        if(MaxScroll()>0){int h=Math.Max(S(24),(Height-headerHeight)*(Height-headerHeight)/(Model.Groups().Count*rowHeight));int y=headerHeight+(Height-headerHeight-h)*scroll/MaxScroll();using(var b=new SolidBrush(C(settings.Colors.Close,"#66717E")))g.FillRectangle(b,IconRailWidth()-3,y,2,h);}
     }
     protected override void OnMouseMove(MouseEventArgs e){base.OnMouseMove(e);int h=Hit(e.Location);
+        if(e.X<IconRailWidth()&&e.Button==MouseButtons.None&&editor==null&&openMenus==0){
+            string next=h>=0&&rows[h].Header?rows[h].Group:null;
+            if(next!=detailGroup){detailGroup=next;detailScroll=0;BuildRows();Invalidate();}
+        }
         if(h!=hover){hover=h;tip.SetToolTip(this,h<0?"↔ 自动展开 / 固定展开 · ⋯ 菜单 · Ctrl+Alt+F12 暂停覆盖":(rows[h].Header?Model.GroupLabel(rows[h].Group)+"（"+Model.Children(rows[h].Group).Count+" 个窗口，副屏 "+Model.Children(rows[h].Group).Count(w=>w.Secondary)+" 个）":rows[h].Window.Label+(rows[h].Window.Secondary?"（副屏）":"")+(String.IsNullOrEmpty(rows[h].Window.Alias)?"":"\n原标题："+rows[h].Window.Title)+"\n右键原位重命名；× 关闭窗口"));Invalidate();}
         if(down>=0&&e.Button==MouseButtons.Left){
             if(!dragging&&(Math.Abs(e.X-downPoint.X)>S(5)||Math.Abs(e.Y-downPoint.Y)>S(5))){dragging=true;dragged=true;Capture=true;tip.Hide(this);}
-            if(dragging){if(e.Y>Height-S(24))scroll=Math.Min(MaxScroll(),scroll+rowHeight/2);if(e.Y<headerHeight+S(12))scroll=Math.Max(0,scroll-rowHeight/2);BuildRows();drop=Hit(e.Location);dropAfter=drop>=0&&e.Y>rows[drop].Bounds.Top+rowHeight/2;Invalidate();}
+            if(dragging){
+                int delta=e.Y>Height-S(24)?rowHeight/2:e.Y<headerHeight+S(12)?-rowHeight/2:0;
+                if(delta!=0)ScrollAt(e.Location,delta);
+                drop=Hit(e.Location);dropAfter=drop>=0&&e.Y>rows[drop].Bounds.Top+rowHeight/2;Invalidate();
+            }
         }
     }
     protected override void OnMouseLeave(EventArgs e){base.OnMouseLeave(e);if(!dragging){hover=-1;Invalidate();}}
@@ -348,7 +499,13 @@ class ShelfForm : Form {
         if(e.Button==MouseButtons.Right){if(h>=0)ShowRowMenu(rows[h],PointToScreen(e.Location));else ShowMainMenu(PointToScreen(e.Location));return;}
         if(e.Button!=MouseButtons.Left)return;
         if(e.Y<headerHeight){if(e.X>Width-S(29))ShowMainMenu(PointToScreen(e.Location));else if(e.X>Width-S(59))ToggleWidth();return;}
-        if(h<0)return;var row=rows[h];if(row.Header){if(ClientSize.Width<S(150)){Model.Pref.Collapsed.Remove(row.Group);hoverExpanded=true;UpdatePlacement();}else Model.Fold(row.Group);Save();BuildRows();Invalidate();}else if(CloseRect(row).Contains(e.Location))CloseWindow(row.Window);else ActivateWindow(row.Window);
+        if(h<0)return;var row=rows[h];if(row.Header){
+            bool wasOpen=detailGroup==row.Group&&!Model.Pref.Collapsed.Contains(row.Group);
+            detailGroup=row.Group;detailScroll=0;
+            if(ClientSize.Width<S(150)||!wasOpen){Model.Pref.Collapsed.Remove(row.Group);hoverExpanded=true;UpdatePlacement();}
+            else Model.Fold(row.Group);
+            Save();BuildRows();Invalidate();
+        }else if(CloseRect(row).Contains(e.Location))CloseWindow(row.Window);else ActivateWindow(row.Window);
     }
     void ToggleWidth(){Model.Pref.Pinned=!Model.Pref.Pinned;Save();UpdatePlacement();BuildRows();Invalidate();}
     internal static bool ShouldMinimize(bool minimized,bool foreground){return !minimized&&foreground;}
@@ -394,7 +551,15 @@ class ShelfForm : Form {
         if(m.Msg==0x21&&editor==null){m.Result=new IntPtr(3);return;}
         if(m.Msg==0x312&&m.WParam.ToInt32()==1){paused=!paused;UpdatePlacement();}base.WndProc(ref m);
     }
-    protected override void OnFormClosed(FormClosedEventArgs e){timer.Stop();Save();if(hotkey)Native.UnregisterHotKey(Handle,1);if(trayIcon!=null){trayIcon.Visible=false;trayIcon.Dispose();}catalog.Dispose();tip.Dispose();base.OnFormClosed(e);}
+    protected override void OnFormClosed(FormClosedEventArgs e){
+        timer.Stop();
+        if(foregroundHook!=IntPtr.Zero)Native.UnhookWinEvent(foregroundHook);
+        if(reorderHook!=IntPtr.Zero)Native.UnhookWinEvent(reorderHook);
+        Save();if(hotkey)Native.UnregisterHotKey(Handle,1);if(trayIcon!=null){trayIcon.Visible=false;trayIcon.Dispose();}
+        if(notificationIcon!=null)notificationIcon.Dispose();
+        if(shelfIcon!=null){Icon=null;shelfIcon.Dispose();}
+        catalog.Dispose();tip.Dispose();base.OnFormClosed(e);
+    }
     public void WriteStatus(){try{File.WriteAllText(diagnosticPath,new JavaScriptSerializer().Serialize(new {utc=DateTime.UtcNow.ToString("o"),visible=Visible,paused=paused,boundaryValid=!temporarilyHidden,bounds=new {x=Left,y=Top,width=Width,height=Height},tray=new {x=trayRect.X,y=trayRect.Y,width=trayRect.Width,height=trayRect.Height},windowCount=Model.Windows.Count,groupCount=Model.Groups().Count,rowCount=rows.Count,expanded=Model.Pref.Pinned||hoverExpanded,pinned=Model.Pref.Pinned,inlineEditing=editor!=null,compactWidth=Model.Pref.CompactWidth,expandedWidth=settings.ExpandedWidth,hotkey=hotkey,rows=rows.Select(r=>new{header=r.Header,handle=(r.Header?Model.Children(r.Group)[0].Handle:r.Window.Handle).ToInt64(),y=r.Bounds.Y,height=r.Bounds.Height,alias=!r.Header&&!String.IsNullOrEmpty(r.Window.Alias)}).ToArray(),fixtures=Model.Windows.Where(w=>w.Title.StartsWith("WindowShelf 验证窗口")).Select(w=>new{handle=w.Handle.ToInt64(),title=w.Title,label=w.Label}).ToArray()}),new UTF8Encoding(false));}catch{}}
     public void RunUiTests(List<string> results){
         RunZOrderTests(results);
@@ -410,21 +575,25 @@ class ShelfForm : Form {
         Rename(rows[1]);editor.Text="";FinishRename(true);Assert(Model.Windows[0].Alias==null,"empty inline name follows title",results);
         Model.Alias(Model.Windows[0],"论文正文");Model.Windows[0].Title="文档甲 - 已更新";Assert(Model.Windows[0].Label=="论文正文","alias survives live title change",results);
         Model.Alias(Model.Windows[0],null);Assert(Model.Windows[0].Label=="文档甲 - 已更新","restore follows latest title",results);
+        OnMouseMove(new MouseEventArgs(MouseButtons.None,0,12,rows[0].Bounds.Y+10,0));
         OnMouseUp(new MouseEventArgs(MouseButtons.Left,1,12,rows[0].Bounds.Y+10,0));Assert(rows.Count==2,"click collapse",results);
         OnMouseUp(new MouseEventArgs(MouseButtons.Left,1,12,rows[0].Bounds.Y+10,0));Assert(rows.Count==4,"click expand",results);
+        OnMouseMove(new MouseEventArgs(MouseButtons.None,0,40,rows[0].Bounds.Y+5,0));
         int y1=rows[1].Bounds.Y+10,y2=rows[2].Bounds.Bottom-4;
+        Assert(Hit(new Point(40,y1))==0&&Hit(new Point(LabelX(rows[1]),y1))==1,"two columns have independent click targets",results);
         int detailX=LabelX(rows[1])+2;OnMouseDown(new MouseEventArgs(MouseButtons.Left,1,detailX,y1,0));OnMouseMove(new MouseEventArgs(MouseButtons.Left,0,detailX,y2,0));OnMouseUp(new MouseEventArgs(MouseButtons.Left,1,detailX,y2,0));Assert(Model.Children("a")[0].Id=="a2","mouse drag window order",results);
         int yb=rows[3].Bounds.Y+10,yt=rows[0].Bounds.Y+2;OnMouseDown(new MouseEventArgs(MouseButtons.Left,1,50,yb,0));OnMouseMove(new MouseEventArgs(MouseButtons.Left,0,50,yt,0));OnMouseUp(new MouseEventArgs(MouseButtons.Left,1,50,yt,0));Assert(Model.Groups()[0]=="b","mouse drag group order",results);
         Model.Fold("a");BuildRows();Assert(rows.Count==2,"fold survives reorder",results);
         var serialized=new JavaScriptSerializer().Serialize(Model.Pref);var restored=new JavaScriptSerializer().Deserialize<Preferences>(serialized);Assert(restored.GroupOrder[0]=="b"&&restored.Collapsed.Contains("a"),"saved layout roundtrip",results);
         Model.Pref.Collapsed.Clear();BuildRows();ClientSize=new Size(240,100);BuildRows();Assert(MaxScroll()>0,"overflow scroll instead of shrink",results);Assert(rowHeight==44,"larger row height remains fixed",results);
         ClientSize=new Size(280,700);BuildRows();foreach(var r in rows.Where(r=>!r.Header))Assert(CloseRect(r).Right<=Width&&CloseRect(r).Width>=40,"large close target inside expanded row",results);
-        Assert(Math.Abs((rows[0].Bounds.Top-headerHeight)-(ClientSize.Height-rows.Last().Bounds.Bottom))<=1,"expanded list centered",results);
+        Assert(Math.Abs((rows[0].Bounds.Top-headerHeight)-(ClientSize.Height-rows.Last(r=>!DetailRow(r)).Bounds.Bottom))<=1,"expanded rail centered",results);
         var expandedIcons=rows.Where(r=>!DetailRow(r)).ToDictionary(r=>r.Group,r=>IconRect(r));
         ClientSize=new Size(92,700);BuildRows();Assert(rows.Count(RowVisible)==2,"compact mode has one icon per application",results);
         foreach(var r in rows.Where(RowVisible)){Assert(CloseRect(r).IsEmpty,"compact mode has no close target",results);var rect=IconRect(r);Assert(Math.Abs((rect.Left+rect.Right)-ClientSize.Width)<=1,"compact icon centered",results);Assert(rect==expandedIcons[r.Group],"hover resize preserves icon x and y",results);Assert(Hit(new Point(rect.X+16,rect.Y+16))==rows.IndexOf(r),"compact icon click target matches expanded position",results);}
-        foreach(var r in rows.Where(DetailRow))Assert(Hit(new Point(IconRailWidth()/2,r.Bounds.Y+rowHeight/2))==-1,"reserved detail slot is not clickable in compact rail",results);
-        Assert(Math.Abs((rows[0].Bounds.Top-headerHeight)-(ClientSize.Height-rows.Last().Bounds.Bottom))<=1,"compact list centered",results);
+        var parents=rows.Where(r=>!DetailRow(r)).ToList();
+        Assert(parents[0].Bounds.Bottom==parents[1].Bounds.Top,"children never leave gaps in the rail",results);
+        Assert(Math.Abs((parents[0].Bounds.Top-headerHeight)-(ClientSize.Height-parents.Last().Bounds.Bottom))<=1,"compact rail centered",results);
         Model.Windows[0].Secondary=true;Assert(SecondaryRow(rows.First(r=>r.Group=="a")),"mixed monitor group marked",results);
         ClientSize=new Size(280,700);BuildRows();Assert(SecondaryRow(rows.First(r=>r.Window!=null&&r.Window.Id=="a1")),"secondary window marked",results);Assert(!SecondaryRow(rows.First(r=>r.Window!=null&&r.Window.Id=="a2")),"primary window not marked",results);
         foreach(var r in rows.Where(r=>!DetailRow(r)))Assert(IconRect(r)==expandedIcons[r.Group],"expand roundtrip does not move application icon",results);

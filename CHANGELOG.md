@@ -2,6 +2,13 @@
 
 [简体中文](CHANGELOG.zh-CN.md)
 
+## 0.1.2 — 2026-11-21
+
+- Opening or closing the hidden tray icons could briefly expose the native taskbar. Shelf now responds to foreground and stacking changes, keeping the tray flyout accessible.
+- Hover over a multi-window app to see its windows in a second column. The icon rail stays in place and the compact list has one row per app.
+- Windows Security, Calculator and Microsoft Store use their individual app identities and icons. Shelf retries late-loading window icons, including those used by MuMu.
+- The executable, Shelf window and notification area use the new neutral-gray and mist-blue icon. The SVG source and nine-size Windows icon are included.
+
 ## 0.1.1 — 2026-11-18
 
 - Fix the native taskbar covering Window Shelf after sign-in or a background taskbar raise.

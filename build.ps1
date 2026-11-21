@@ -8,6 +8,8 @@ $compilerArgs = @('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8
     '/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll',
     '/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll',
     ('/win32manifest:' + (Join-Path $src 'app.manifest')),
+    ('/win32icon:' + (Join-Path $src 'WindowShelf.ico')),
+    ('/resource:' + (Join-Path $src 'WindowShelf.ico') + ',WindowShelf.WindowShelf.ico'),
     ('/out:' + (Join-Path $OutputDirectory 'WindowShelf.exe')),
     (Join-Path $src 'WindowShelf.cs'), (Join-Path $src 'AppSettings.cs'))
 & $compiler @compilerArgs

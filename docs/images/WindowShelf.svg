@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="256" height="256" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">Window Shelf</title>
+  <defs>
+    <rect id="window" x="9" y="3" width="20" height="6" rx="1.5"
+          stroke="#56759A" stroke-width="2"/>
+  </defs>
+  <rect x="2" y="2" width="4" height="28" rx="1.5" fill="#384554"/>
+  <g fill="#E9ECF0">
+    <use xlink:href="#window"/>
+    <use xlink:href="#window" y="10" fill="#ADC5DF"/>
+    <use xlink:href="#window" y="20"/>
+  </g>
+</svg>

@@ -1,3 +1,5 @@
+<img src="docs/images/WindowShelf.svg" width="48" alt="Window Shelf">
+
 # Window Shelf
 
 [English](README.md) | [简体中文](README.zh-CN.md)
@@ -10,17 +12,18 @@ A small Windows window switcher that overlays the application area of a **left-s
 
 *Illustration based on the proposed color scheme, with fictitious window titles. It is not a desktop screenshot. Original app icons keep their own colors.*
 
-## Fixed in v0.1.1
+## Changes in v0.1.2
 
-After sign-in, Windows could raise the native taskbar above Window Shelf while another app kept focus. Hover still expanded the shelf, but the taskbar covered its icon area. The shelf now checks the actual stacking order and restores itself immediately above the taskbar when needed, without activating itself or changing its bounds. Windows already above the taskbar, such as flyouts, keep their relative priority during this repair.
+- Opening or closing the hidden tray icons could briefly expose the native taskbar. Shelf now responds to foreground and stacking changes, keeping the tray flyout accessible.
+- Hover over a multi-window app to see its windows in a second column. The icon rail stays in place and the compact list has one row per app.
+- Windows Security, Calculator and Microsoft Store use their individual app identities and icons. Shelf retries late-loading window icons, including those used by MuMu.
+- The executable, Shelf window and notification area use the new neutral-gray and mist-blue icon. The SVG source and nine-size Windows icon are included.
 
-**Upgrade from v0.1.0:** exit Window Shelf from its menu, extract the new runtime ZIP into the same installation folder, and launch it again. Keep your data folder and any `window-shelf.data-dir` file. If the EXE path is unchanged, the existing scheduled task needs no re-registration. This fix adds no parameters or startup tasks.
-
-See [English changes](CHANGELOG.md), [中文更新记录](CHANGELOG.zh-CN.md), and [validation](docs/VALIDATION.en.md).
+To upgrade, exit Shelf, extract the runtime ZIP over your installation and launch it again. Keep your data folder and any `window-shelf.data-dir` file. The existing scheduled task can keep using the same executable path.
 
 ## Download and run
 
-1. Open [Releases](https://github.com/Zhy54/window-shelf/releases) and download `WindowShelf-v0.1.1-win-x64.zip`.
+1. Open [Releases](https://github.com/Zhy54/window-shelf/releases) and download `WindowShelf-v0.1.2-win-x64.zip`.
 2. Extract the ZIP into a permanent folder, then run `WindowShelf.exe`.
 3. Keep the native vertical taskbar on the **left**. A horizontal/right-side taskbar or an unavailable tray boundary makes the overlay hide instead of guessing its position.
 
@@ -31,7 +34,7 @@ The application does **not** register startup automatically. The executable can 
 ## What it does
 
 - Compact mode follows the native taskbar width: one centered app icon and a count for multi-window apps.
-- Hover reveals titles and 40-pixel close targets. App icons and scroll position stay fixed; child-window space is reserved while compact.
+- Hover reveals titles and 40-pixel close targets. App icons and scroll position stay fixed; grouped windows open in a second column.
 - App groups expand/collapse. Drag group headers to sort apps; drag child windows to reorder within a group.
 - Rename a window inline. Enter saves, Escape cancels, and an empty name or **恢复原标题** restores live window-title updates. This changes only the sidebar alias, not the file name or actual window title.
 - Click a foreground window to minimize it; click a background/minimized window to activate/restore it.

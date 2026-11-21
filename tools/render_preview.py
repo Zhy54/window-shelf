@@ -46,9 +46,10 @@ def render(zh):
                 if not group:line(left+251,yy+15,left+265,yy+29,COL['muted'],2);line(left+265,yy+15,left+251,yy+29,COL['muted'],2)
         if expanded:
             for i,title in enumerate((('主屏文档' if zh else 'Main display'),('副屏文档' if zh else 'Other display'))):
-                yy=y+(3+i)*44
-                if i==1:box(left+12,yy+1,width-16,42,COL['secondary'])
-                icon(left+42,yy+6,'W');text(left+112,yy+10,title,15)
+                yy=y+(2+i)*44
+                box(left+92,yy,width-93,44,COL['bg'])
+                if i==1:box(left+92,yy+1,width-96,42,COL['secondary'])
+                icon(left+104,yy+6,'W');text(left+141,yy+10,title,15)
                 line(left+251,yy+15,left+265,yy+29,COL['muted'],2);line(left+265,yy+15,left+251,yy+29,COL['muted'],2)
     labels=[('bg','中性灰底色' if zh else 'Quiet neutral-gray surface'),('accent','当前窗口细标记' if zh else 'Slim active-window marker'),('secondary','副屏窗口雾蓝底色' if zh else 'Mist blue for the other display')]
     for i,(key,label) in enumerate(labels):
