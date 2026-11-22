@@ -11,7 +11,7 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
-[assembly: System.Reflection.AssemblyFileVersion("0.1.2.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.1.2.1")]
 
 namespace WindowShelf {
 static class Native {
@@ -294,6 +294,10 @@ class ShelfForm : Form {
     WindowCatalog catalog=new WindowCatalog();
     List<ShelfRow> rows=new List<ShelfRow>();
     System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
+    readonly System.Windows.Forms.Timer singleClickTimer=new System.Windows.Forms.Timer();
+    WindowItem pendingActivation;
+    string pressedWindowId,firstClickId;
+    bool doubleClickOnWindow;
     Native.WinEventHandler shellEventHandler;
     IntPtr foregroundHook,reorderHook,taskbarHandle;
     ToolTip tip=new ToolTip(); NotifyIcon trayIcon;
@@ -308,6 +312,8 @@ class ShelfForm : Form {
         if(Model.Pref.LayoutVersion<4){Model.Pref.TopInset=0;Model.Pref.LayoutVersion=4;}
         Text="Window Shelf · 窗口侧栏";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=Program.UiVerification;TopMost=true;AutoScaleMode=AutoScaleMode.None;BackColor=C(settings.Colors.Background,"#F3F4F6");
         SetStyle(ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer|ControlStyles.UserPaint|ControlStyles.ResizeRedraw,true);
+        SetStyle(ControlStyles.StandardDoubleClick,true);
+        singleClickTimer.Tick+=delegate{CompleteSingleClick();};
         SetFonts(1);MinimumSize=new Size(70,90);KeyPreview=true;
         tip.InitialDelay=500;tip.ReshowDelay=150;tip.AutoPopDelay=12000;
         MouseWheel+=delegate(object s,MouseEventArgs e){ScrollAt(e.Location,-e.Delta/120*rowHeight*3);};
@@ -481,7 +487,7 @@ class ShelfForm : Form {
             string next=h>=0&&rows[h].Header?rows[h].Group:null;
             if(next!=detailGroup){detailGroup=next;detailScroll=0;BuildRows();Invalidate();}
         }
-        if(h!=hover){hover=h;tip.SetToolTip(this,h<0?"↔ 自动展开 / 固定展开 · ⋯ 菜单 · Ctrl+Alt+F12 暂停覆盖":(rows[h].Header?Model.GroupLabel(rows[h].Group)+"（"+Model.Children(rows[h].Group).Count+" 个窗口，副屏 "+Model.Children(rows[h].Group).Count(w=>w.Secondary)+" 个）":rows[h].Window.Label+(rows[h].Window.Secondary?"（副屏）":"")+(String.IsNullOrEmpty(rows[h].Window.Alias)?"":"\n原标题："+rows[h].Window.Title)+"\n右键原位重命名；× 关闭窗口"));Invalidate();}
+        if(h!=hover){hover=h;tip.SetToolTip(this,h<0?"↔ 自动展开 / 固定展开 · ⋯ 菜单 · Ctrl+Alt+F12 暂停覆盖":(rows[h].Header?Model.GroupLabel(rows[h].Group)+"（"+Model.Children(rows[h].Group).Count+" 个窗口，副屏 "+Model.Children(rows[h].Group).Count(w=>w.Secondary)+" 个）":rows[h].Window.Label+(rows[h].Window.Secondary?"（副屏）":"")+(String.IsNullOrEmpty(rows[h].Window.Alias)?"":"\n原标题："+rows[h].Window.Title)+"\n中键最大化 · 左键双击最小化\n右键原位重命名；× 关闭窗口"));Invalidate();}
         if(down>=0&&e.Button==MouseButtons.Left){
             if(!dragging&&(Math.Abs(e.X-downPoint.X)>S(5)||Math.Abs(e.Y-downPoint.Y)>S(5))){dragging=true;dragged=true;Capture=true;tip.Hide(this);}
             if(dragging){
@@ -492,11 +498,37 @@ class ShelfForm : Form {
         }
     }
     protected override void OnMouseLeave(EventArgs e){base.OnMouseLeave(e);if(!dragging){hover=-1;Invalidate();}}
-    protected override void OnMouseDown(MouseEventArgs e){base.OnMouseDown(e);if(editor!=null&&!editor.Bounds.Contains(e.Location))FinishRename(true);down=-1;dragged=false;if(e.Button!=MouseButtons.Left||e.Y<headerHeight)return;int h=Hit(e.Location);if(h>=0&&(rows[h].Header||!CloseRect(rows[h]).Contains(e.Location))){down=h;downPoint=e.Location;}}
+    WindowItem WindowAt(Point point){
+        int index=Hit(point);
+        if(index<0||rows[index].Header||CloseRect(rows[index]).Contains(point))return null;
+        return rows[index].Window;
+    }
+    protected override void OnMouseDown(MouseEventArgs e){
+        base.OnMouseDown(e);
+        if(editor!=null&&!editor.Bounds.Contains(e.Location))FinishRename(true);
+        var window=WindowAt(e.Location);
+        pressedWindowId=window==null?null:window.Id;
+        doubleClickOnWindow=e.Button==MouseButtons.Left&&e.Clicks==2&&pressedWindowId!=null&&pressedWindowId==firstClickId;
+        if(doubleClickOnWindow)CancelSingleClick();
+        else CompleteSingleClick();
+        firstClickId=null;
+        down=-1;dragged=false;
+        if(e.Button!=MouseButtons.Left||e.Y<headerHeight)return;
+        int h=Hit(e.Location);
+        if(h>=0&&(rows[h].Header||!CloseRect(rows[h]).Contains(e.Location))){down=h;downPoint=e.Location;}
+    }
     protected override void OnMouseUp(MouseEventArgs e){base.OnMouseUp(e);int h=Hit(e.Location);
         if(dragging){if(down>=0&&down<rows.Count&&drop>=0&&drop<rows.Count){var from=rows[down];var to=rows[drop];if(from.Header||Model.Children(from.Group).Count==1)Model.MoveGroup(from.Group,to.Group,dropAfter);else if(!to.Header&&from.Group==to.Group)Model.MoveWindow(from.Group,from.Window.Id,to.Window.Id,dropAfter);Save();}dragging=false;Capture=false;drop=-1;down=-1;BuildRows();Invalidate();return;}
         down=-1;if(dragged)return;
         if(e.Button==MouseButtons.Right){if(h>=0)ShowRowMenu(rows[h],PointToScreen(e.Location));else ShowMainMenu(PointToScreen(e.Location));return;}
+        if(e.Button==MouseButtons.Middle){
+            var window=WindowAt(e.Location);
+            if(window!=null&&window.Id==pressedWindowId&&IsCurrentWindow(window)){
+                Native.ShowWindowAsync(window.Handle,3);
+                Native.SetForegroundWindow(window.Handle);
+            }
+            return;
+        }
         if(e.Button!=MouseButtons.Left)return;
         if(e.Y<headerHeight){if(e.X>Width-S(29))ShowMainMenu(PointToScreen(e.Location));else if(e.X>Width-S(59))ToggleWidth();return;}
         if(h<0)return;var row=rows[h];if(row.Header){
@@ -505,17 +537,38 @@ class ShelfForm : Form {
             if(ClientSize.Width<S(150)||!wasOpen){Model.Pref.Collapsed.Remove(row.Group);hoverExpanded=true;UpdatePlacement();}
             else Model.Fold(row.Group);
             Save();BuildRows();Invalidate();
-        }else if(CloseRect(row).Contains(e.Location))CloseWindow(row.Window);else ActivateWindow(row.Window);
+        }else if(CloseRect(row).Contains(e.Location)){
+            if(pressedWindowId==null)CloseWindow(row.Window);
+        }else if(row.Window.Id==pressedWindowId&&IsCurrentWindow(row.Window)){
+            if(doubleClickOnWindow||ShouldMinimize(Native.IsIconic(row.Window.Handle),IsForeground(row.Window))){
+                Native.ShowWindowAsync(row.Window.Handle,6);
+            }else{
+                // Wait for the second press before bringing a background or minimized window forward.
+                pendingActivation=row.Window;
+                singleClickTimer.Interval=SystemInformation.DoubleClickTime;
+                singleClickTimer.Start();
+            }
+            firstClickId=doubleClickOnWindow?null:row.Window.Id;
+        }
     }
+    void CancelSingleClick(){singleClickTimer.Stop();pendingActivation=null;}
+    void CompleteSingleClick(){
+        var window=pendingActivation;
+        CancelSingleClick();
+        if(window!=null&&IsCurrentWindow(window)&&!paused&&Visible)BringWindowForward(window);
+    }
+    static bool IsCurrentWindow(WindowItem w){return Native.IsWindow(w.Handle)&&Native.Pid(w.Handle)==w.Pid;}
+    static bool IsForeground(WindowItem w){return Native.GetAncestor(Native.GetForegroundWindow(),3)==w.Handle;}
     void ToggleWidth(){Model.Pref.Pinned=!Model.Pref.Pinned;Save();UpdatePlacement();BuildRows();Invalidate();}
     internal static bool ShouldMinimize(bool minimized,bool foreground){return !minimized&&foreground;}
     void ActivateWindow(WindowItem w){
-        if(!Native.IsWindow(w.Handle)||Native.Pid(w.Handle)!=w.Pid)return;
-        bool minimized=Native.IsIconic(w.Handle);
-        bool foreground=Native.GetAncestor(Native.GetForegroundWindow(),3)==w.Handle;
-        if(ShouldMinimize(minimized,foreground)){Native.ShowWindowAsync(w.Handle,6);return;}
+        if(!IsCurrentWindow(w))return;
+        if(ShouldMinimize(Native.IsIconic(w.Handle),IsForeground(w))){Native.ShowWindowAsync(w.Handle,6);return;}
+        BringWindowForward(w);
+    }
+    void BringWindowForward(WindowItem w){
         var h=Native.GetLastActivePopup(w.Handle);if(h==IntPtr.Zero||!Native.IsWindowVisible(h))h=w.Handle;
-        if(minimized){Native.ShowWindowAsync(w.Handle,9);h=w.Handle;}
+        if(Native.IsIconic(w.Handle)){Native.ShowWindowAsync(w.Handle,9);h=w.Handle;}
         if(!Native.SetForegroundWindow(h))tip.Show("窗口未能切到前台，请检查是否有对话框",this,8,headerHeight,2400);
     }
     void CloseWindow(WindowItem w){if(testMode)return;if(!Native.IsWindow(w.Handle)||Native.Pid(w.Handle)!=w.Pid)return;if(!Native.PostMessage(w.Handle,0x10,IntPtr.Zero,IntPtr.Zero))tip.Show("未能关闭：该窗口可能需要更高权限",this,8,headerHeight,3000);}
@@ -553,6 +606,7 @@ class ShelfForm : Form {
     }
     protected override void OnFormClosed(FormClosedEventArgs e){
         timer.Stop();
+        singleClickTimer.Dispose();
         if(foregroundHook!=IntPtr.Zero)Native.UnhookWinEvent(foregroundHook);
         if(reorderHook!=IntPtr.Zero)Native.UnhookWinEvent(reorderHook);
         Save();if(hotkey)Native.UnregisterHotKey(Handle,1);if(trayIcon!=null){trayIcon.Visible=false;trayIcon.Dispose();}
@@ -636,6 +690,42 @@ class ShelfForm : Form {
             fixture.Close();
         }
     }
+    public void RunGestureTests(List<string> results){
+        using(var fixture=new Form{Text="Window Shelf gesture test",ShowInTaskbar=false})
+        using(var bitmap=SystemIcons.Application.ToBitmap()){
+            var window=new WindowItem{Id="gesture",Group="gesture",Handle=fixture.Handle,Pid=Process.GetCurrentProcess().Id,Icon=bitmap};
+            Show();
+            fixture.Show();
+            Model.Windows=new List<WindowItem>{window};
+            BuildRows();
+            var point=new Point(20,rows[0].Bounds.Y+rowHeight/2);
+            Action<MouseButtons,int> click=(button,count)=>{
+                var e=new MouseEventArgs(button,count,point.X,point.Y,0);
+                OnMouseDown(e);OnMouseUp(e);
+            };
+            Action waitForClick=()=>{
+                var watch=Stopwatch.StartNew();
+                while(watch.ElapsedMilliseconds<SystemInformation.DoubleClickTime+100){Application.DoEvents();Thread.Sleep(10);}
+            };
+            click(MouseButtons.Middle,1);Application.DoEvents();
+            Assert(fixture.WindowState==FormWindowState.Maximized,"middle click maximizes a normal window",results);
+            click(MouseButtons.Middle,1);Application.DoEvents();
+            Assert(fixture.WindowState==FormWindowState.Maximized,"middle click keeps an already maximized window maximized",results);
+            click(MouseButtons.Left,1);click(MouseButtons.Left,2);waitForClick();
+            Assert(Native.IsIconic(window.Handle),"double click minimizes and stays minimized",results);
+            click(MouseButtons.Left,1);Application.DoEvents();
+            Assert(Native.IsIconic(window.Handle),"first click of a double click does not flash a minimized window",results);
+            click(MouseButtons.Left,2);waitForClick();
+            Assert(Native.IsIconic(window.Handle),"double click on minimized window cancels pending restore",results);
+            click(MouseButtons.Left,1);waitForClick();
+            Assert(!Native.IsIconic(window.Handle),"single click still restores a minimized window",results);
+            fixture.WindowState=FormWindowState.Minimized;Application.DoEvents();
+            click(MouseButtons.Middle,1);Application.DoEvents();
+            Assert(fixture.WindowState==FormWindowState.Maximized,"middle click maximizes a minimized window",results);
+            Hide();
+            Model.Windows.Clear();BuildRows();
+        }
+    }
     public void RunNativeToggleTest(List<string> results){
         IntPtr previous=Native.GetForegroundWindow();
         using(var fixture=new Form{Text="WindowShelf 临时最小化验证",Size=new Size(280,100),StartPosition=FormStartPosition.CenterScreen,ShowInTaskbar=false}){
@@ -666,7 +756,7 @@ static class Program {
         int dataArg=Array.IndexOf(args,"--data-dir");if(dataArg>=0&&dataArg+1<args.Length)data=Path.GetFullPath(args[dataArg+1]);
         if(args.Length>0&&args[0]=="--selftest"){
             string path=args.Length>1?args[1]:Path.Combine(data,"selftest.json");Directory.CreateDirectory(Path.GetDirectoryName(path));var results=new List<string>();
-            try{using(var f=new ShelfForm(Path.Combine(Path.GetDirectoryName(path),"test-state"),true)){f.RunUiTests(results);if(args.Contains("--native-test"))f.RunNativeToggleTest(results);if(args.Contains("--monitor-test"))f.RunMonitorTests(results);using(var bmp=new Bitmap(f.Width,f.Height)){f.DrawToBitmap(bmp,new Rectangle(0,0,f.Width,f.Height));bmp.Save(Path.ChangeExtension(path,"png"));}}File.WriteAllText(path,new JavaScriptSerializer().Serialize(new{passed=true,tests=results}));}
+            try{using(var f=new ShelfForm(Path.Combine(Path.GetDirectoryName(path),"test-state"),true)){f.RunUiTests(results);if(args.Contains("--native-test"))f.RunNativeToggleTest(results);if(args.Contains("--monitor-test"))f.RunMonitorTests(results);if(args.Contains("--gesture-test"))f.RunGestureTests(results);using(var bmp=new Bitmap(f.Width,f.Height)){f.DrawToBitmap(bmp,new Rectangle(0,0,f.Width,f.Height));bmp.Save(Path.ChangeExtension(path,"png"));}}File.WriteAllText(path,new JavaScriptSerializer().Serialize(new{passed=true,tests=results}));}
             catch(Exception e){File.WriteAllText(path,new JavaScriptSerializer().Serialize(new{passed=false,tests=results,error=e.ToString()}));Environment.ExitCode=1;}return;
         }
         if(args.Length>0&&args[0]=="--fixture"){

@@ -1,5 +1,9 @@
 # Validation
 
+## v0.1.2.1
+
+The self-test passed 69 checks with `--monitor-test --gesture-test`. A temporary window on the installed build also verified middle-click maximization, double-click minimization that persisted after the double-click interval, and single-click restoration.
+
 ## v0.1.2
 
 The x64 release build passed 62 layout, stacking and dual-monitor checks. The 16-pixel notification icon and 32-pixel executable icon matched their design frames pixel for pixel. In one open-and-close cycle on the installed build, the native taskbar did not cover the sampled Shelf point in 1,255 observations. The measurements sampled window order rather than individual display frames.

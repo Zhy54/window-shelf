@@ -2,6 +2,12 @@
 
 [简体中文](CHANGELOG.zh-CN.md)
 
+## 0.1.2.1 — 2026-11-23
+
+Middle-click a window row to maximize it, even when it is minimized. Double-click the row with the left mouse button to minimize it. For an app with multiple windows, use the individual window rows in the second column.
+
+A single left click on the foreground window minimizes it immediately. For a background or minimized window, Shelf waits for the Windows double-click interval before switching to or restoring it.
+
 ## 0.1.2 — 2026-11-21
 
 - Opening or closing the hidden tray icons could briefly expose the native taskbar. Shelf now responds to foreground and stacking changes, keeping the tray flyout accessible.

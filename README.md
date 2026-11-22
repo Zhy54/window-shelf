@@ -12,18 +12,15 @@ A small Windows window switcher that overlays the application area of a **left-s
 
 *Illustration based on the proposed color scheme, with fictitious window titles. It is not a desktop screenshot. Original app icons keep their own colors.*
 
-## Changes in v0.1.2
+## Window gestures in v0.1.2.1
 
-- Opening or closing the hidden tray icons could briefly expose the native taskbar. Shelf now responds to foreground and stacking changes, keeping the tray flyout accessible.
-- Hover over a multi-window app to see its windows in a second column. The icon rail stays in place and the compact list has one row per app.
-- Windows Security, Calculator and Microsoft Store use their individual app identities and icons. Shelf retries late-loading window icons, including those used by MuMu.
-- The executable, Shelf window and notification area use the new neutral-gray and mist-blue icon. The SVG source and nine-size Windows icon are included.
+Middle-click a window row to maximize it, even when it is minimized. Double-click the row with the left mouse button to minimize it. For an app with multiple windows, use the individual window rows in the second column.
 
 To upgrade, exit Shelf, extract the runtime ZIP over your installation and launch it again. Keep your data folder and any `window-shelf.data-dir` file. The existing scheduled task can keep using the same executable path.
 
 ## Download and run
 
-1. Open [Releases](https://github.com/Zhy54/window-shelf/releases) and download `WindowShelf-v0.1.2-win-x64.zip`.
+1. Open [Releases](https://github.com/Zhy54/window-shelf/releases) and download `WindowShelf-v0.1.2.1-win-x64.zip`.
 2. Extract the ZIP into a permanent folder, then run `WindowShelf.exe`.
 3. Keep the native vertical taskbar on the **left**. A horizontal/right-side taskbar or an unavailable tray boundary makes the overlay hide instead of guessing its position.
 
@@ -37,7 +34,7 @@ The application does **not** register startup automatically. The executable can 
 - Hover reveals titles and 40-pixel close targets. App icons and scroll position stay fixed; grouped windows open in a second column.
 - App groups expand/collapse. Drag group headers to sort apps; drag child windows to reorder within a group.
 - Rename a window inline. Enter saves, Escape cancels, and an empty name or **恢复原标题** restores live window-title updates. This changes only the sidebar alias, not the file name or actual window title.
-- Click a foreground window to minimize it; click a background/minimized window to activate/restore it.
+- A single left click on the foreground window minimizes it immediately. For a background or minimized window, Shelf waits for the Windows double-click interval before switching to or restoring it.
 - Close uses the normal window-close request. The application can show save prompts or minimize to its own tray.
 - Mist-blue rows mark windows on a secondary display. Split-color groups contain windows on both primary and secondary displays.
 - Right-click an individual window and choose **在另一块显示器显示** (*Show on the other display*). Existing windows are moved; no new instance is launched. Minimized windows are positioned on the destination before restoration.
